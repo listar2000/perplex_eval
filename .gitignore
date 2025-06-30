@@ -1,0 +1,19 @@
+# model cache
+.cache/*
+
+# data
+data/*
+
+# output
+output/*
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
