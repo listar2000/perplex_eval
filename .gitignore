@@ -6,6 +6,7 @@ data/*
 
 # output
 output/*
+slurm/*
 
 # Python-generated files
 __pycache__/
