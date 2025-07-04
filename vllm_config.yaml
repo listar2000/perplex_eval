@@ -1,0 +1,5 @@
+enforce_eager: true
+trust_remote_code: false
+max_num_seqs: 512
+gpu_memory_utilization: 0.9
+dtype: "bfloat16"
