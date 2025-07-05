@@ -12,6 +12,7 @@
 # this number should usually agree with the number of A100 above
 NUM_GPUS=2
 OUTPUT_FILE=output/wiki-10M.parquet
+DATASET_FILE=data/wiki/chunked_texts_df.parquet
 
 nvidia-smi
 
@@ -24,7 +25,7 @@ python wiki_eval.py \
     --model Qwen/Qwen3-0.6B \
     --dp-size $NUM_GPUS \
     --tp-size 1 \
-    --dataset data/wiki/chunked_texts_df.parquet \
+    --dataset $DATASET_FILE \
     --prompt-column chunk_text \
     --output-file $OUTPUT_FILE \
 
