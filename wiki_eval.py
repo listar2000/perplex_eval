@@ -6,6 +6,8 @@ The script allows either data-level parallelism (DP) or tensor-level parallelism
 Reference: https://docs.vllm.ai/en/latest/examples/offline_inference/data_parallel.html
 """
 import os
+import sys
+import logging
 from time import sleep
 from multiprocessing import Process, Queue
 import pandas as pd
@@ -55,6 +57,7 @@ def parse_args():
         "--output-file", type=str, default="output/wiki.parquet", help="Path for the output Parquet file"
     )
     parser.add_argument("--debug-limit", type=int, default=0, help="Limit the number of prompts to process")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose vLLM output")
     return parser.parse_args()
 
 
@@ -83,50 +86,76 @@ def main(
     dataset: pd.DataFrame,
     prompt_column: str,
     results_queue: Queue,
+    verbose: bool = False,
 ):
-    os.environ["VLLM_DP_RANK"] = str(global_dp_rank)
-    os.environ["VLLM_DP_RANK_LOCAL"] = str(local_dp_rank)
-    os.environ["VLLM_DP_SIZE"] = str(dp_size)
-    os.environ["VLLM_DP_MASTER_IP"] = dp_master_ip
-    os.environ["VLLM_DP_MASTER_PORT"] = str(dp_master_port)
-
-    # Distribute prompts to each rank
-    floor = len(dataset) // dp_size
-    remainder = len(dataset) % dp_size
-
-    def start(rank):
-        return rank * floor + min(rank, remainder)
+    # Configure logging to control vLLM verbosity
+    if not verbose:
+        # Suppress vLLM's verbose output
+        logging.getLogger("vllm").setLevel(logging.WARNING)
+        logging.getLogger("vllm.engine").setLevel(logging.WARNING)
+        logging.getLogger("vllm.worker").setLevel(logging.WARNING)
+        logging.getLogger("vllm.distributed").setLevel(logging.WARNING)
+        # Also suppress other potentially verbose loggers
+        logging.getLogger("transformers").setLevel(logging.WARNING)
+        logging.getLogger("torch").setLevel(logging.WARNING)
     
-    beg_idx, end_idx = start(global_dp_rank), start(global_dp_rank + 1)
-    prompt_dicts = dataset.iloc[beg_idx:end_idx].to_dict(orient="records")
-    prompts = [prompt_dict[prompt_column] for prompt_dict in prompt_dicts]
-
-    assert len(prompt_dicts) > 0, f"DP rank {global_dp_rank} has no prompts"
-    # print(f"DP rank {global_dp_rank} needs to process {len(prompt_dicts)} prompts")
-
-    # Create a sampling params object.
-    sampling_params = SamplingParams(
-        temperature=0.0, prompt_logprobs=0, max_tokens=1
-    )
-
-    # Create an LLM.
-    llm = LLM(
-        model=model,
-        tensor_parallel_size=tp_size,
-        **vllm_config,
-    )
-    outputs = llm.generate(prompts, sampling_params)
+    # Force stdout to flush immediately for real-time output
+    sys.stdout.flush()
     
-    for i, output in enumerate(outputs):
-        text_id, chunk_id = int(prompt_dicts[i]["text_id"]), int(prompt_dicts[i]["chunk_id"])
-        logprobs = process_logprobs(output.prompt_logprobs)
-        results_queue.put({"text_id": text_id, "chunk_id": chunk_id, "logprobs": logprobs})
+    try:
+        os.environ["VLLM_DP_RANK"] = str(global_dp_rank)
+        os.environ["VLLM_DP_RANK_LOCAL"] = str(local_dp_rank)
+        os.environ["VLLM_DP_SIZE"] = str(dp_size)
+        os.environ["VLLM_DP_MASTER_IP"] = dp_master_ip
+        os.environ["VLLM_DP_MASTER_PORT"] = str(dp_master_port)
 
-    # MODIFICATION: Signal that this worker is done by putting None in the queue
-    results_queue.put(None)
-    
-    # Give engines time to pause their processing loops before exiting. 
-    sleep(1)
+        # Distribute prompts to each rank
+        floor = len(dataset) // dp_size
+        remainder = len(dataset) % dp_size
+
+        def start(rank):
+            return rank * floor + min(rank, remainder)
+        
+        beg_idx, end_idx = start(global_dp_rank), start(global_dp_rank + 1)
+        prompt_dicts = dataset.iloc[beg_idx:end_idx].to_dict(orient="records")
+        prompts = [prompt_dict[prompt_column] for prompt_dict in prompt_dicts]
+
+        assert len(prompt_dicts) > 0, f"DP rank {global_dp_rank} has no prompts"
+        print(f"DP rank {global_dp_rank} processing {len(prompt_dicts)} prompts", flush=True)
+
+        # Create a sampling params object.
+        sampling_params = SamplingParams(
+            temperature=0.0, prompt_logprobs=0, max_tokens=1
+        )
+
+        # Create an LLM.
+        print(f"DP rank {global_dp_rank}: Initializing LLM...", flush=True)
+        llm = LLM(
+            model=model,
+            tensor_parallel_size=tp_size,
+            **vllm_config,
+        )
+        
+        print(f"DP rank {global_dp_rank}: Generating outputs...", flush=True)
+        outputs = llm.generate(prompts, sampling_params)
+        
+        print(f"DP rank {global_dp_rank}: Processing {len(outputs)} outputs...", flush=True)
+        for i, output in enumerate(outputs):
+            text_id, chunk_id = int(prompt_dicts[i]["text_id"]), int(prompt_dicts[i]["chunk_id"])
+            logprobs = process_logprobs(output.prompt_logprobs)
+            results_queue.put({"text_id": text_id, "chunk_id": chunk_id, "logprobs": logprobs})
+
+        # Signal that this worker is done by putting None in the queue
+        results_queue.put(None)
+        print(f"DP rank {global_dp_rank}: Completed processing", flush=True)
+        
+        # Give engines time to pause their processing loops before exiting. 
+        sleep(1)
+        
+    except Exception as e:
+        print(f"DP rank {global_dp_rank}: ERROR - {str(e)}", flush=True)
+        # Re-raise the exception to ensure the process exits with error code
+        raise
 
 if __name__ == "__main__":
     args = parse_args()
@@ -153,6 +182,7 @@ if __name__ == "__main__":
 
     wiki_prompt_column = args.prompt_column
 
+    print(f"Starting {dp_size} data parallel processes...", flush=True)
     procs = []
     for local_dp_rank, global_dp_rank in enumerate(range(dp_size)):
         proc = Process(
@@ -169,10 +199,12 @@ if __name__ == "__main__":
                 wiki_dataset,
                 wiki_prompt_column,
                 results_queue,
+                args.verbose,
             ),
         )
         proc.start()
         procs.append(proc)
+        print(f"Started process {proc.pid} for DP rank {global_dp_rank}", flush=True)
 
     # MODIFICATION: Logic to collect results and stream to Parquet
     finished_workers = 0
@@ -191,6 +223,7 @@ if __name__ == "__main__":
     try:
         # Open the Parquet writer
         parquet_writer = pq.ParquetWriter(output_filename, schema)
+        print(f"Opened Parquet writer for {output_filename}", flush=True)
 
         while finished_workers < len(procs):
             # Get a result from the queue
@@ -199,6 +232,7 @@ if __name__ == "__main__":
             if result is None:
                 # A worker has finished
                 finished_workers += 1
+                print(f"Worker {finished_workers}/{len(procs)} completed", flush=True)
             else:
                 results_batch.append(result)
             
@@ -213,24 +247,33 @@ if __name__ == "__main__":
 
                 # Write the table to the Parquet file
                 parquet_writer.write_table(table)
-                print(f"Wrote a batch of {len(results_batch)} results to {output_filename}")
+                print(f"Wrote a batch of {len(results_batch)} results to {output_filename}", flush=True)
                 # Clear the batch
                 results_batch = []
     finally:
         if parquet_writer:
             parquet_writer.close()
-        print(f"Finished writing all results to {output_filename}.")
+        print(f"Finished writing all results to {output_filename}.", flush=True)
 
 
     # Wait for all processes to complete
+    print("Waiting for all processes to complete...", flush=True)
     exit_code = 0
-    for proc in procs:
+    for i, proc in enumerate(procs):
         proc.join(timeout=300)
         if proc.exitcode is None:
-            print(f"Killing process {proc.pid} that didn't stop within 5 minutes.")
+            print(f"Killing process {proc.pid} (DP rank {i}) that didn't stop within 5 minutes.", flush=True)
             proc.kill()
             exit_code = 1
-        elif proc.exitcode:
+        elif proc.exitcode != 0:
+            print(f"Process {proc.pid} (DP rank {i}) exited with code {proc.exitcode}", flush=True)
             exit_code = proc.exitcode
+        else:
+            print(f"Process {proc.pid} (DP rank {i}) completed successfully", flush=True)
+
+    if exit_code == 0:
+        print("All processes completed successfully!", flush=True)
+    else:
+        print(f"Some processes failed with exit code {exit_code}", flush=True)
 
     exit(exit_code)

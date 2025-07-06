@@ -81,7 +81,8 @@ The `wiki_eval.py` script accepts several important parameters:
 - `--dataset`: Path to your Parquet dataset
 - `--prompt-column`: Column name containing the text prompts
 - `--output-file`: Output Parquet file path
-- `--debug-limit`: Limit number of prompts for testing purpose. Set it to `0` to run on the full dataset.
+- `--debug-limit`: Limit number of prompts for testing purpose. Set it to `0` to run on the full dataset
+- `--verbose`: Enable verbose vLLM output (default: False)
 
 ## ⚙️ Configuration
 
@@ -144,4 +145,4 @@ For testing, use the `--debug-limit` parameter to process only a subset of your 
 
 ```bash
 python wiki_eval.py --debug-limit 100 --output-file output/debug.parquet
-```
+`````
