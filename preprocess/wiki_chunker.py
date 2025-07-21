@@ -15,7 +15,7 @@ from pathlib import Path
 import nltk, pandas as pd
 from nltk.tokenize import sent_tokenize
 
-nltk.download("punkt", quiet=True)
+nltk.download("punkt", download_dir="./cache", quiet=True)
 
 _WORD_RE = re.compile(r"\w")
 
