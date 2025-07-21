@@ -21,3 +21,6 @@ wheels/
 
 # misc
 star_setup.sh
+
+# ipynb checkpoint
+**/.ipynb_checkpoints/
