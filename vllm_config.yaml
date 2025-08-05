@@ -3,3 +3,4 @@ trust_remote_code: true
 # max_num_seqs: 512
 gpu_memory_utilization: 0.9
 dtype: "bfloat16"
+max_model_len: 8192

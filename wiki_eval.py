@@ -60,7 +60,6 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true", help="Enable verbose vLLM output")
     return parser.parse_args()
 
-
 def load_vllm_config(config_path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
