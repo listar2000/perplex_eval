@@ -60,13 +60,12 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true", help="Enable verbose vLLM output")
     return parser.parse_args()
 
-
 def load_vllm_config(config_path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
 
-def process_logprobs(raw_logprobs: list[Optional[dict[int, Logprob]]]) -> list[float]:
+def process_vllm_logprobs(raw_logprobs: list[Optional[dict[int, Logprob]]]) -> list[float]:
     logprobs = []
     # the first one is always None, so we skip it
     for logprob in raw_logprobs[1:]:
@@ -146,7 +145,7 @@ def process_dataset_slice(
         results = []
         for i, output in enumerate(outputs):
             text_id, chunk_id = int(prompt_dicts[i]["text_id"]), int(prompt_dicts[i]["chunk_id"])
-            logprobs = process_logprobs(output.prompt_logprobs)
+            logprobs = process_vllm_logprobs(output.prompt_logprobs)
             results.append({"text_id": text_id, "chunk_id": chunk_id, "logprobs": logprobs})
 
         print(f"Single process: Completed processing", flush=True)
@@ -208,7 +207,7 @@ def main(
         print(f"DP rank {global_dp_rank}: Processing {len(outputs)} outputs...", flush=True)
         for i, output in enumerate(outputs):
             text_id, chunk_id = int(prompt_dicts[i]["text_id"]), int(prompt_dicts[i]["chunk_id"])
-            logprobs = process_logprobs(output.prompt_logprobs)
+            logprobs = process_vllm_logprobs(output.prompt_logprobs)
             results_queue.put({"text_id": text_id, "chunk_id": chunk_id, "logprobs": logprobs})
 
         # Signal that this worker is done by putting None in the queue
