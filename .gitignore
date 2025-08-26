@@ -22,3 +22,6 @@ wheels/
 # misc
 star_setup.sh
 shell/submit-*.sh
+
+# ipynb checkpoint
+**/.ipynb_checkpoints/
